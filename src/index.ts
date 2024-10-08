@@ -11,12 +11,31 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 // Routes for Web API
 const app = new Hono()
 
-app.get('/success', (c) => {
-  return c.text('Success!')
-})
+// Event responses from Stripe endpoint. 
+// You select what event types you want to listen to 
+app.post('/webhook', async (c) => {
+  const rawBody = await c.req.text();
+  // A signature sent from Stripe - it's combined with the rawBody and local secret
+  // to determine authenticity
+  const signature = c.req.header('stripe-signature');
 
-app.get('/cancel', (c) => {
-  return c.text('Canceled!')
+  let event;
+  try { // constructs and verifies the signature of an event
+    event = stripe.webhooks.constructEvent(rawBody, signature!, process.env.STRIPE_WEBHOOK_SECRET!);
+  } catch (error: any) {
+    console.error(`Web hook signature verification failed: ${error.message}`);
+    throw new HTTPException(400)
+  }
+
+  // Handle the checkout.session.completed event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    console.log(session)
+
+    // TODO Fullfill the purchase with business logic
+  }
+  
+  return c.text('success');
 })
 
 // Hardcoded Product Test
@@ -43,8 +62,45 @@ app.post('/checkout', async (c) => {
   }
 });
 
+app.get('/', (c) => {
+  const html = `
+    <!DOCTYPE html>
+        <html>
+            <head>
+                <title>
+                  Checkout
+                </title>
+                  <!-- Frontend Library to redirect users to Checkout Session -->
+                  <script src="https://js.stripe.com/v3/"></script>
+            </head>
+            <body>
+                <h1>Checkout</h1>
+                <button id="checkoutButton">Checkout</button>
 
+                <script>
+                    const checkoutButton = document.getElementById('checkoutButton');
+                    checkoutButton.addEventListener('click', async () => {
+                        const response = await fetch('/checkout', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                        });
+                        const { id } = await response.json();
+                        const stripe = Stripe('${process.env.STRIPE_PUBLISHABLE_KEY}');
+                        await stripe.redirectToCheckout({ sessionId: id });
+                    });
+                </script>
+            </body>
+          </html>
+    `;
 
+    return c.html(html);
+})
+
+app.get('/success', (c) => {
+  return c.text('checkout success');
+})
 
 // Start the Node Server with the Hono Web Framework
 const port = 3000
